@@ -73,6 +73,12 @@
           isClang = kernel.stdenv.cc.isClang or false;
           kernelBuild = "${kernel.dev}/lib/modules/${kernel.modDirVersion}/build";
           makeFlags = if isClang then "LLVM=1 CC=clang" else "";
+          # Forward the main kernel's make flags (notably cmd_sign, which
+          # nixpkgs overrides to deterministically sign every module via
+          # kmodigest) so these out-of-tree modules get a .ko.cer too.
+          # Without it, NixOS's module aggregator (used for
+          # boot.extraModulePackages) fails looking for the missing .ko.cer.
+          signMakeFlags = pkgs.lib.escapeShellArgs (kernel.commonMakeFlags or [ ]);
         in
         rec {
           firmware = kernel.stdenv.mkDerivation {
@@ -127,16 +133,15 @@
             '';
             buildPhase = ''
               runHook preBuild
-              make -C ${kernelBuild} M=$(pwd) ${makeFlags} modules
+              make -C ${kernelBuild} M=$(pwd) ${signMakeFlags} ${makeFlags} modules
               runHook postBuild
             '';
             installPhase = ''
               runHook preInstall
-              modDir="$out/lib/modules/${kernel.modDirVersion}/extra/mt76"
-              install -dm755 "$modDir/mt7921" "$modDir/mt7925"
-              install -m644 mt76.ko mt76-connac-lib.ko mt792x-lib.ko "$modDir/"
-              install -m644 mt7921/*.ko "$modDir/mt7921/"
-              install -m644 mt7925/*.ko "$modDir/mt7925/"
+              make -C ${kernelBuild} M=$(pwd) ${signMakeFlags} ${makeFlags} \
+                INSTALL_MOD_PATH=$out INSTALL_MOD_DIR=extra/mt76 \
+                DEPMOD=true INSTALL_MOD_STRIP=1 \
+                modules_install
               runHook postInstall
             '';
           };
@@ -150,14 +155,15 @@
             buildPhase = ''
               runHook preBuild
               echo "obj-m += btusb.o btmtk.o" > Makefile
-              make -C ${kernelBuild} M=$(pwd) ${makeFlags} modules
+              make -C ${kernelBuild} M=$(pwd) ${signMakeFlags} ${makeFlags} modules
               runHook postBuild
             '';
             installPhase = ''
               runHook preInstall
-              modDir="$out/lib/modules/${kernel.modDirVersion}/extra/bluetooth"
-              install -dm755 "$modDir"
-              install -m644 btusb.ko btmtk.ko "$modDir/"
+              make -C ${kernelBuild} M=$(pwd) ${signMakeFlags} ${makeFlags} \
+                INSTALL_MOD_PATH=$out INSTALL_MOD_DIR=extra/bluetooth \
+                DEPMOD=true INSTALL_MOD_STRIP=1 \
+                modules_install
               runHook postInstall
             '';
           };
